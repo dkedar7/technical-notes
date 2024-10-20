@@ -1,2 +1,2 @@
 # Notes
-Short code scripts for easy reference. This repository is inspired from Chris Albon's notes: https://chrisalbon.com.
+Short code snippets for easy reference. These notes are hosted on https://dkedar.com/notes.
