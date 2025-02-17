@@ -11,5 +11,5 @@ jobs:
         uses: peter-evans/repository-dispatch@v2
         with:
           token: ${{ secrets.PAT }}
-          repository: owner/main-repo
+          repository: dkedar7/dkedar-com-quarto
           event-type: submodule-updated
