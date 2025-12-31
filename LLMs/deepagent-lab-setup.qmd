@@ -1,0 +1,81 @@
+---
+title: "DeepAgent Lab: LangChain Agents in JupyterLab"
+date: 2025-12-30
+categories: [LLMs, Tools, Jupyter]
+description: "Setting up and using DeepAgent Lab to integrate LangChain agents directly into your JupyterLab workflow"
+---
+
+# Bringing AI agents into your notebooks
+
+[DeepAgent Lab](https://github.com/dkedar7/deepagent-lab) is a JupyterLab extension that integrates LangChain agents into your notebook workflow, enabling natural language interactions with your data science projects.
+
+## Key Features
+
+- **Sidebar chat interface** for conversing with your agent
+- **Notebook manipulation tools** to create, edit, and execute Jupyter notebooks
+- **Human-in-the-loop workflow** with review-and-approve before agent actions execute
+- **Automatic workspace awareness** that shares file context with agents
+- **Custom agent support** for langgraph-compatible agents
+- **Zero-config setup** with automatic server detection
+
+## Installation
+
+Install via pip:
+
+```bash
+pip install deepagent-lab
+```
+
+## Quick Start
+
+The recommended approach uses the launcher command, which handles all configuration automatically:
+
+```bash
+export ANTHROPIC_API_KEY=your-api-key-here
+deepagent-lab
+```
+
+The launcher automatically:
+- Detects available ports
+- Generates authentication tokens
+- Configures environment variables
+- Starts JupyterLab
+
+## Custom Agents
+
+You can use your own langgraph-compatible agent by creating a Python file and setting the `DEEPAGENT_AGENT_SPEC` environment variable:
+
+```bash
+export DEEPAGENT_AGENT_SPEC=./my_agent.py:agent
+deepagent-lab
+```
+
+The same agent configuration works across both DeepAgent Lab and deepagent-dash, making agents portable across platforms.
+
+## Manual Configuration
+
+If you prefer manual setup, configure these environment variables:
+
+```bash
+export ANTHROPIC_API_KEY=your-api-key
+export DEEPAGENT_WORKSPACE_ROOT=/path/to/workspace
+export DEEPAGENT_JUPYTER_SERVER_URL=http://localhost:8888
+export DEEPAGENT_JUPYTER_TOKEN=your-token
+
+jupyter lab --port 8888 --IdentityProvider.token=$DEEPAGENT_JUPYTER_TOKEN
+```
+
+## Key Environment Variables
+
+All configuration uses the `DEEPAGENT_` prefix:
+
+- `ANTHROPIC_API_KEY`: Required for the default agent
+- `DEEPAGENT_AGENT_SPEC`: Path to custom agent (format: `file.py:agent`)
+- `DEEPAGENT_WORKSPACE_ROOT`: Working directory for the agent
+- `DEEPAGENT_JUPYTER_SERVER_URL`: JupyterLab server URL (auto-detected with launcher)
+- `DEEPAGENT_JUPYTER_TOKEN`: Authentication token (auto-generated with launcher)
+
+## Resources
+
+- **GitHub**: [github.com/dkedar7/deepagent-lab](https://github.com/dkedar7/deepagent-lab)
+- **License**: MIT
