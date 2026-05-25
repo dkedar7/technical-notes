@@ -1,0 +1,219 @@
+---
+title: "OpenRouter with LangChain and LangGraph"
+date: 2026-05-25
+categories: [LLMs, LangChain, LangGraph, Tools]
+description: "One API key for hundreds of models — Anthropic, OpenAI, Mistral, Llama, Gemini, and many open-weights. A practical guide to wiring OpenRouter into LangChain chat calls and LangGraph state machines, with model fallback and cost notes."
+---
+
+# One key, many models
+
+[OpenRouter](https://openrouter.ai) sits in front of most of the popular hosted LLMs and a long tail of open-weights models, exposing them all behind a single OpenAI-compatible API. For a builder that wants to A/B between Claude, GPT, Mistral, Llama, and a half-dozen smaller models without rewriting integration code, it's the lowest-friction option.
+
+This note shows how to call OpenRouter from **LangChain** (for plain chat) and **LangGraph** (for state machines), with patterns for switching models and falling back when the primary route fails.
+
+## Why bother — three concrete reasons
+
+1. **Model experimentation without integration tax.** One client wrapper, one key, every model. Try `anthropic/claude-opus-4.6` and `meta-llama/llama-3.3-70b-instruct` against the same prompt by changing a single string.
+2. **Cost control via routing.** Pin expensive logic (planning, evaluation) to a top-tier model; route cheap, high-volume calls (summarisation, classification) to smaller models. OpenRouter's per-model pricing makes the trade visible.
+3. **Resilience.** If Anthropic's API has an incident, fail over to GPT or a Llama deployment with one line of code. Same response shape; downstream parsing stays unchanged.
+
+## Setup
+
+You need an OpenRouter account and an API key. The signup is free; pay-as-you-go billing kicks in only when you use paid models.
+
+1. Sign up at [openrouter.ai](https://openrouter.ai).
+2. Generate a key at [openrouter.ai/keys](https://openrouter.ai/keys).
+3. Set it as an environment variable — **do not paste it into source code or commit it to git**.
+
+```bash
+# Linux / macOS
+export OPENROUTER_API_KEY="sk-or-v1-..."
+
+# Windows PowerShell (User scope, persists across shells)
+[Environment]::SetEnvironmentVariable("OPENROUTER_API_KEY", "sk-or-v1-...", "User")
+```
+
+Install the libraries:
+
+```bash
+pip install langchain langchain-openai langgraph
+```
+
+OpenRouter uses an OpenAI-compatible API, so the `langchain-openai` package's `ChatOpenAI` client works as the model adapter — you just point it at OpenRouter's base URL.
+
+## Basic LangChain call
+
+```python
+import os
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, SystemMessage
+
+llm = ChatOpenAI(
+    model="anthropic/claude-sonnet-4.6",          # OpenRouter model id
+    base_url="https://openrouter.ai/api/v1",      # the redirect that does the magic
+    api_key=os.environ["OPENROUTER_API_KEY"],     # read from env, never hard-code
+    default_headers={
+        # Optional but recommended — appears on your OpenRouter activity dashboard.
+        "HTTP-Referer": "https://dkedar.com",
+        "X-Title":      "openrouter-langchain-demo",
+    },
+)
+
+response = llm.invoke([
+    SystemMessage(content="You are a concise assistant. One paragraph max."),
+    HumanMessage(content="Explain why entropy increases in a chemical reaction."),
+])
+print(response.content)
+```
+
+The only OpenRouter-specific bits are `base_url`, the model id format (`provider/model-name`), and the optional `HTTP-Referer` / `X-Title` headers that show up in your OpenRouter activity log. Everything else is standard LangChain.
+
+## Switching models
+
+OpenRouter exposes models as `provider/model-id` strings. A few you'll see often:
+
+| Model | OpenRouter id | Approximate role |
+|---|---|---|
+| Claude Opus 4.7 | `anthropic/claude-opus-4.7` | Top-tier reasoning |
+| Claude Sonnet 4.6 | `anthropic/claude-sonnet-4.6` | Balanced workhorse |
+| GPT-5 | `openai/gpt-5` | OpenAI flagship |
+| Llama 3.3 70B Instruct | `meta-llama/llama-3.3-70b-instruct` | Open-weights, lower cost |
+| Mistral Large 2 | `mistralai/mistral-large-2` | Strong European option |
+| Gemini 2.5 Pro | `google/gemini-2.5-pro` | Long context, multimodal |
+| DeepSeek V3 | `deepseek/deepseek-v3` | Open-weights, cheap |
+
+The full catalogue lives at [openrouter.ai/models](https://openrouter.ai/models) with prices and context-window sizes.
+
+Switching is a one-line change:
+
+```python
+llm_cheap = ChatOpenAI(
+    model="deepseek/deepseek-v3",
+    base_url="https://openrouter.ai/api/v1",
+    api_key=os.environ["OPENROUTER_API_KEY"],
+)
+```
+
+Useful pattern — keep model ids in a config dict so you can flip without touching call sites:
+
+```python
+MODELS = {
+    "planner":     "anthropic/claude-opus-4.7",
+    "executor":    "anthropic/claude-sonnet-4.6",
+    "classifier":  "deepseek/deepseek-v3",     # high-volume, cheap
+    "tester":      "meta-llama/llama-3.3-70b-instruct",
+}
+
+def make_llm(role: str) -> ChatOpenAI:
+    return ChatOpenAI(
+        model=MODELS[role],
+        base_url="https://openrouter.ai/api/v1",
+        api_key=os.environ["OPENROUTER_API_KEY"],
+    )
+```
+
+## LangGraph state machine using OpenRouter
+
+LangGraph builds graphs of nodes that share a typed state object. Each node typically does either a model call or a deterministic transformation. OpenRouter-backed `ChatOpenAI` instances drop in as the LLM for any node.
+
+This example sketches a two-step graph: a **planner** node (high-quality model) decides what to do, then an **executor** node (cheaper model) drafts a response.
+
+```python
+from typing import TypedDict, Annotated
+from langgraph.graph import StateGraph, START, END
+from langgraph.graph.message import add_messages
+from langchain_core.messages import AnyMessage, SystemMessage, HumanMessage
+
+class State(TypedDict):
+    messages: Annotated[list[AnyMessage], add_messages]
+    plan: str
+
+planner  = make_llm("planner")
+executor = make_llm("executor")
+
+def plan_step(state: State) -> dict:
+    response = planner.invoke([
+        SystemMessage(content="Outline a 2-3 step plan to answer the user. Return just the plan."),
+        *state["messages"],
+    ])
+    return {"plan": response.content}
+
+def execute_step(state: State) -> dict:
+    response = executor.invoke([
+        SystemMessage(content=f"Follow this plan:\n{state['plan']}\n\nThen answer the user concisely."),
+        *state["messages"],
+    ])
+    return {"messages": [response]}
+
+graph = StateGraph(State)
+graph.add_node("plan",    plan_step)
+graph.add_node("execute", execute_step)
+graph.add_edge(START,     "plan")
+graph.add_edge("plan",    "execute")
+graph.add_edge("execute", END)
+
+app = graph.compile()
+
+result = app.invoke({
+    "messages": [HumanMessage(content="How do I choose a TBC coating chemistry for a desert-route flight?")],
+    "plan": "",
+})
+print(result["messages"][-1].content)
+```
+
+Two things worth noting:
+
+- The **same client wrapper** (`ChatOpenAI` pointed at OpenRouter) backs both nodes. The cost / capability split is purely a function of the model id.
+- Per-node model assignment is the natural granularity for cost control in agentic systems — the planner sees the full task once, the executor runs in tight loops.
+
+## Fallback when the primary model is unavailable
+
+OpenRouter has a built-in `models` field that lets you specify a fallback list — if the first model fails (rate limit, outage), it tries the next:
+
+```python
+llm = ChatOpenAI(
+    model="anthropic/claude-opus-4.7",
+    base_url="https://openrouter.ai/api/v1",
+    api_key=os.environ["OPENROUTER_API_KEY"],
+    extra_body={
+        "models": [
+            "anthropic/claude-opus-4.7",
+            "anthropic/claude-sonnet-4.6",
+            "openai/gpt-5",
+            "meta-llama/llama-3.3-70b-instruct",
+        ],
+        "route": "fallback",
+    },
+)
+```
+
+This sends the request to Claude Opus 4.7 first; on any error, OpenRouter automatically retries down the list and returns the first success. For production agents this beats writing per-provider retry logic.
+
+LangChain also has its own framework-level `.with_fallbacks([...])` if you'd rather control the fallback chain in Python:
+
+```python
+primary   = make_llm("planner")
+secondary = make_llm("executor")
+resilient = primary.with_fallbacks([secondary])
+```
+
+Either works. The OpenRouter-side `models` field is cheaper (one HTTP round-trip from your client); LangChain's `with_fallbacks` is more flexible (different model configurations per fallback, retry strategies, etc.).
+
+## Cost & rate-limit notes
+
+- **Bring-your-own-key (BYOK) is supported** for several providers — useful if you already have an Anthropic or OpenAI key and want to route through OpenRouter for the unified interface but pay the provider directly. Configure in your OpenRouter settings.
+- **Free tier**: OpenRouter has a small set of free models (Llama 3.x variants typically). Useful for exploration; throughput is limited.
+- **Pricing is per-input-token + per-output-token, model-dependent**. Check [openrouter.ai/models](https://openrouter.ai/models) for current rates — they change.
+- **Streaming**, **function/tool calling**, **structured output (JSON mode)** all work over the OpenAI-compatible API and translate transparently through LangChain.
+
+## When *not* to use OpenRouter
+
+- If you're calling a single provider exclusively and have an existing direct integration that's working well, the OpenRouter routing layer adds latency (one extra hop) and a thin margin to the per-token cost.
+- If you need provider-specific features that haven't been mapped through OpenRouter yet (some Anthropic prompt-caching headers, some OpenAI tool-call options) — direct integration may still be required.
+
+## References
+
+- [OpenRouter docs](https://openrouter.ai/docs)
+- [OpenRouter model catalogue](https://openrouter.ai/models)
+- [LangChain `ChatOpenAI` reference](https://python.langchain.com/api_reference/openai/chat_models/langchain_openai.chat_models.base.ChatOpenAI.html)
+- [LangGraph tutorial](https://langchain-ai.github.io/langgraph/tutorials/introduction/)
