@@ -78,9 +78,9 @@ OpenRouter exposes models as `provider/model-id` strings. A few you'll see often
 | Claude Sonnet 4.6 | `anthropic/claude-sonnet-4.6` | Balanced workhorse |
 | GPT-5 | `openai/gpt-5` | OpenAI flagship |
 | Llama 3.3 70B Instruct | `meta-llama/llama-3.3-70b-instruct` | Open-weights, lower cost |
-| Mistral Large 2 | `mistralai/mistral-large-2` | Strong European option |
+| Mistral Large 2 | `mistralai/mistral-large-2411` | Strong European option |
 | Gemini 2.5 Pro | `google/gemini-2.5-pro` | Long context, multimodal |
-| DeepSeek V3 | `deepseek/deepseek-v3` | Open-weights, cheap |
+| DeepSeek V3 | `deepseek/deepseek-chat-v3.1` | Open-weights, cheap |
 
 The full catalogue lives at [openrouter.ai/models](https://openrouter.ai/models) with prices and context-window sizes.
 
@@ -88,7 +88,7 @@ Switching is a one-line change:
 
 ```python
 llm_cheap = ChatOpenAI(
-    model="deepseek/deepseek-v3",
+    model="deepseek/deepseek-chat-v3.1",
     base_url="https://openrouter.ai/api/v1",
     api_key=os.environ["OPENROUTER_API_KEY"],
 )
@@ -100,7 +100,7 @@ Useful pattern — keep model ids in a config dict so you can flip without touch
 MODELS = {
     "planner":     "anthropic/claude-opus-4.7",
     "executor":    "anthropic/claude-sonnet-4.6",
-    "classifier":  "deepseek/deepseek-v3",     # high-volume, cheap
+    "classifier":  "deepseek/deepseek-chat-v3.1",     # high-volume, cheap
     "tester":      "meta-llama/llama-3.3-70b-instruct",
 }
 
@@ -217,3 +217,9 @@ Either works. The OpenRouter-side `models` field is cheaper (one HTTP round-trip
 - [OpenRouter model catalogue](https://openrouter.ai/models)
 - [LangChain `ChatOpenAI` reference](https://python.langchain.com/api_reference/openai/chat_models/langchain_openai.chat_models.base.ChatOpenAI.html)
 - [LangGraph tutorial](https://langchain-ai.github.io/langgraph/tutorials/introduction/)
+
+---
+
+::: {.callout-note appearance="simple"}
+**Tested 2026-05-26** against the live OpenRouter API with `langchain 1.x` + `langchain-openai 1.x` + `langgraph 1.x` (versions as currently on PyPI). Every code block — basic call, model switch, the LangGraph two-node graph, the `extra_body` fallback config — runs end-to-end. Model IDs change over time; if a block errors with "is not a valid model ID", check the live catalogue at [openrouter.ai/models](https://openrouter.ai/models) and update the string.
+:::
